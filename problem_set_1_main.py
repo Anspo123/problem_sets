@@ -26,7 +26,7 @@ the analyses above may have missed
 from pathlib import Path
 import pandas as pd
 import statsmodels.api as sm
-import csv
+import matplotlib.pyplot as plt
 
 
 # -----------------------
@@ -122,16 +122,18 @@ class DataAnalysis:
 
     def regression(self, model, y, x):
 
+        # OLS:
         if model.upper() == "OLS":
             result = sm.OLS(y, x).fit(cov_type="HC1")
 
+        # Probit:
         elif model.upper() == "PROBIT":
             if not set(y.dropna().unique()).issubset({0, 1}):
                 raise ValueError(
                 "Probit requires a binary dependent variable."
                 )
 
-            result = sm.Probit(y, x).fit()
+            result = sm.Probit(y, x).fit(cov_type="HC1")
 
         else:
             raise ValueError(f"Unknown regression model: {model}")
@@ -139,6 +141,29 @@ class DataAnalysis:
         print(result.summary())
 
         return result
+
+
+    def make_graph(
+            self,
+            graph,
+            y,
+            x,
+            x_label,
+            y_label,
+            g_title
+    ):
+
+        if graph.upper() == "SCATTERPLOT":
+            plt.scatter(
+                self.df[y],
+                self.df[x]
+            )
+
+        plt.xlabel(x_label.strip().title())
+        plt.ylabel(y_label.strip().title())
+        plt.title(g_title.strip().title())
+        plt.tight_layout()
+        plt.show()
 
 
 # -----------------------
@@ -193,6 +218,17 @@ def main():
         yvar="steps",
         xvars=["female"]
     )
+
+    # Make scatterplot:
+    data_analysis.make_graph(
+            "SCATTERPLOT",
+            y1,
+            x1,
+            "INCOME",
+            "STEPS",
+            "SCATTERPLOT"
+    )
+
 
     # Do regression (OLS):
     ols_result = data_analysis.regression("OLS", y1, x1)
