@@ -143,29 +143,6 @@ class DataAnalysis:
         return result
 
 
-    def make_graph(
-            self,
-            graph,
-            y,
-            x,
-            x_label,
-            y_label,
-            g_title
-    ):
-
-        if graph.upper() == "SCATTERPLOT":
-            plt.scatter(
-                self.df[y],
-                self.df[x]
-            )
-
-        plt.xlabel(x_label.strip().title())
-        plt.ylabel(y_label.strip().title())
-        plt.title(g_title.strip().title())
-        plt.tight_layout()
-        plt.show()
-
-
 # -----------------------
 # MAIN FUNCTION
 # -----------------------
@@ -219,20 +196,7 @@ def main():
         xvars=["female"]
     )
 
-    # Make scatterplot:
-    data_analysis.make_graph(
-            "SCATTERPLOT",
-            y1,
-            x1,
-            "INCOME",
-            "STEPS",
-            "SCATTERPLOT"
-    )
-
-
-    # Do regression (OLS):
-    ols_result = data_analysis.regression("OLS", y1, x1)
-
+    # Regression("OLS", y1, x1)
     y2, x2 = data_analysis.load_data(
         yvar="steps",
         xvars=["female", "weight"]
