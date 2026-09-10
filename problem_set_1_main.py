@@ -18,7 +18,7 @@ conclude?
 regressors. Estimate this model and discuss what you observe.
 
 5. What else? Dr. Engel values thoroughness. Are there notable patterns in the data that
-the analyses above may have missed
+the analyses above may have missed?
 """
 # -----------------------
 # IMPORT MODULES
@@ -143,6 +143,19 @@ class DataAnalysis:
         return result
 
 
+class VisualizeData:
+
+    def __init__(self, df):
+
+        self.df = df.copy()
+
+
+    def save_results_as_text(self, result, output_path):
+
+        with open(output_path, "w", encoding="utf-8") as file:
+            file.write(result.summary().as_text())
+
+
     def create_chart(self,
                      chart,
                      y,
@@ -187,6 +200,31 @@ class DataAnalysis:
         plt.close()
 
 
+    def create_matrix(self, variables, c_title, output_path):
+        axes = pd.plotting.scatter_matrix(
+            self.df[variables],
+            figsize=(12, 12),
+            diagonal="hist",
+            alpha=0.5
+        )
+
+        figure = axes[0, 0].figure
+        figure.suptitle(
+            c_title,
+            fontsize=18,
+            y=0.96
+        )
+
+        figure.tight_layout(rect=(0, 0, 1, 0.97))
+        figure.savefig(
+            output_path,
+            dpi=300,
+            bbox_inches="tight"
+        )
+
+        plt.close(figure)
+
+
 # -----------------------
 # MAIN FUNCTION
 # -----------------------
@@ -224,6 +262,8 @@ def main():
     final_df = finish_data.sort_data(combined_df)
     finish_data.create_csv(final_df, final_data_path)
 
+    visualize_data = VisualizeData(final_df)
+
     # Data analysis:
     # -----------------------
     # 1. The gender gap. 
@@ -241,40 +281,162 @@ def main():
             xvars =["female"]
         )
 
-        # Regression ("OLS", y1, x1)
+        # Regression ("OLS", y1, x1):
         ols_result = data_analysis.regression("OLS", y1, x1)
 
-        # Load variables:
-        y2, y2 = data_analysis.load_data(
-            yvar ="steps",
-            xvars =["female", "weight"]
-        )   
-
-        # Regression ("MULTIPLE OLS", y2, x2)
-        multiple_ols_result = data_analysis.regression("OLS", y1, x1)
-
-        # Load variables:
-        y3, x3 = data_analysis.load_data(
-            yvar ="female",
-            xvars =["steps"]
-        )
-
-        # Regression ("PROBIT", y2, x2)
-        probit_result = data_analysis.regression("PROBIT", y3, x3)
-
-        # Make scatterplot:
-        data_analysis.create_chart(
-            "SCATTERPLOT",
-            final_df["weight"], # X-variable
-            final_df["bmi"], # Y-variable
-            "Scatterplot",
-            "BMI", # X-label
-            "Weight [kg]", # Y-label
-            output_path / "scatterplot.png"
+        # Save as text:
+        visualize_data.save_results_as_text(
+            ols_result,
+            output_path / "ols_table.txt"
         )
 
     except ValueError:
         return
+
+    # -----------------------
+    # 2. The gender gap. 
+    # -----------------------
+    """
+    Jonas recommends adding income and resting heart rate as controls.
+    """
+
+    try:
+        # Load variables:
+        y2, x2 = data_analysis.load_data(
+            yvar ="steps",
+            xvars =["female",
+                    "income",
+                    "resting_heart_rate"
+            ]
+        )   
+
+        # Regression ("MULTIPLE OLS", y2, x2):
+        ols_result_controls = data_analysis.regression("OLS", y2, x2)
+
+        # Save as text:
+        visualize_data.save_results_as_text(
+            ols_result_controls,
+            output_path / "ols_controls_table.txt"
+        )
+
+    except ValueError:
+        return
+
+
+    # -----------------------
+    # 3. Steps and BMI. 
+    # -----------------------
+    """
+    Test Lena’s claim that BMI is negatively associated with
+    daily steps among women.
+    """
+
+    women = final_df[final_df["female"] == 1]
+    women_analysis = DataAnalysis(women)
+
+    try:
+
+        y3, x3 = women_analysis.load_data(
+        yvar="steps",
+        xvars=["bmi"]
+        )
+
+        # Regression ("T-TEST", y2, x2)
+        ols_result_women = data_analysis.regression("OLS", y3, x3)
+
+        # Find t-value:
+        test = ols_result_women.t_test("bmi = 0")
+
+        coefficient = ols_result_women.params["bmi"]
+        two_sided_p = float(test.pvalue)
+
+        if coefficient < 0:
+            one_sided_p = two_sided_p / 2
+
+        else:
+            one_sided_p = 1 - two_sided_p / 2
+
+        print()
+        print(f"One sided p-vale: {one_sided_p:.4f}")
+
+    except ValueError:
+        return
+
+    # -----------------------
+    # 4. Steps and BMI. 
+    # -----------------------
+    """
+    Lena also suggests including BMI, height, and weight together as
+    regressors.
+    """
+
+    try:
+
+        # Load variables:
+        y4, x4 = data_analysis.load_data(
+            yvar ="steps",
+            xvars =["female",
+                    "bmi",
+                    "height",
+                    "weight"
+            ]
+        )
+
+        # Regression ("MULTIPLE OLS", y2, x2):
+        ols_result_controls_2 = data_analysis.regression("OLS", y4, x4)
+
+        # Save as text:
+        visualize_data.save_results_as_text(
+            ols_result_controls_2,
+            output_path / "ols_controls_2_table.txt"
+        )
+
+    except ValueError:
+        return
+
+    # -----------------------
+    # 5. Other patterns. 
+    # -----------------------
+    """
+    Are there notable patterns in the data that
+    the analyses above may have missed?
+    """
+
+    # Make SCATTER MATRIX:
+    visualize_data.create_matrix(
+        [
+        "steps",
+        "bmi",
+        "height",
+        "weight",
+        "income",
+        "resting_heart_rate",
+        "shoe_size",
+        ],
+        "Scatter Matrix",
+        output_path / "scatter_matrix.png"
+    )
+
+    # -----------------------
+    # 5. Added bonus.
+    # -----------------------
+
+    try:
+
+        visualize_data.create_chart(
+                    "SCATTERPLOT",
+                    final_df["steps"], # x-variable
+                    final_df["bmi"], # y-variable
+                    "BMI and Average Daily Steps",
+                    "BMI",
+                    "Steps",
+                    output_path / "scatterplot.png"
+        )
+
+    except ValueError as error:
+        print(f"Chart error: {error}")
+        return
+
 
 # -----------------------
 # MAIN GUARD
