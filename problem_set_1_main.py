@@ -143,6 +143,50 @@ class DataAnalysis:
         return result
 
 
+    def create_chart(self,
+                     chart,
+                     y,
+                     x,
+                     c_title,
+                     x_lable,
+                     y_lable,
+                     output_path
+    ):
+
+        male = self.df["female"] == 0
+        female = self.df["female"] == 1
+
+        if chart.upper() == "SCATTERPLOT":
+
+            plt.scatter(
+            x[male],
+            y[male],
+            color="blue",
+            alpha=0.6,
+            label="Male"
+            )
+
+            plt.scatter(
+                x[female],
+                y[female],
+                color="red",
+                alpha=0.6,
+                label="Female"
+            )
+
+        else:
+            raise ValueError("Invalid chart.")
+
+        plt.legend()
+        plt.title(c_title)
+        plt.xlabel(x_lable)
+        plt.ylabel(y_lable)
+        plt.xticks(rotation=45)
+        plt.tight_layout()
+        plt.savefig(output_path)
+        plt.close()
+
+
 # -----------------------
 # MAIN FUNCTION
 # -----------------------
@@ -172,7 +216,6 @@ def main():
         male_df_clean = prep_male.clean_data()
 
     except ValueError:
-        print("Error: Invalid data.")
         return
 
     # Prepare final dataset:
@@ -219,8 +262,18 @@ def main():
         # Regression ("PROBIT", y2, x2)
         probit_result = data_analysis.regression("PROBIT", y3, x3)
 
+        # Make scatterplot:
+        data_analysis.create_chart(
+            "SCATTERPLOT",
+            final_df["weight"], # X-variable
+            final_df["bmi"], # Y-variable
+            "Scatterplot",
+            "BMI", # X-label
+            "Weight [kg]", # Y-label
+            output_path / "scatterplot.png"
+        )
+
     except ValueError:
-        print("Error: Invalid data.")
         return
 
 # -----------------------
