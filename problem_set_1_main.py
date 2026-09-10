@@ -189,28 +189,39 @@ def main():
     Estimate the gender gap in daily steps
     using an appropriate regression model.
     """
-    # Load variables:
-    data_analysis = DataAnalysis(final_df)
-    y1, x1 = data_analysis.load_data(
-        yvar="steps",
-        xvars=["female"]
-    )
 
-    # Regression("OLS", y1, x1)
-    y2, x2 = data_analysis.load_data(
-        yvar="steps",
-        xvars=["female", "weight"]
-    )
-
-    multi_ols_result = data_analysis.regression("OLS", y2, x2)
-
-    y3, x3 = data_analysis.load_data(
-            yvar="female",
-            xvars=["steps", "weight"]
+    try: 
+        # Load variables:
+        data_analysis = DataAnalysis(final_df)
+        y1, x1 = data_analysis.load_data(
+            yvar ="steps",
+            xvars =["female"]
         )
-    
-    probit_result = data_analysis.regression("PROBIT", y3, x3)
 
+        # Regression ("OLS", y1, x1)
+        ols_result = data_analysis.regression("OLS", y1, x1)
+
+        # Load variables:
+        y2, y2 = data_analysis.load_data(
+            yvar ="steps",
+            xvars =["female", "weight"]
+        )   
+
+        # Regression ("MULTIPLE OLS", y2, x2)
+        multiple_ols_result = data_analysis.regression("OLS", y1, x1)
+
+        # Load variables:
+        y3, x3 = data_analysis.load_data(
+            yvar ="female",
+            xvars =["steps"]
+        )
+
+        # Regression ("PROBIT", y2, x2)
+        probit_result = data_analysis.regression("PROBIT", y3, x3)
+
+    except ValueError:
+        print("Error: Invalid data.")
+        return
 
 # -----------------------
 # MAIN GUARD
