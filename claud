@@ -1,0 +1,39 @@
+1. Balance check (do this first, briefly)
+
+Before anything else, verify randomization worked: compare means of gpa_prior, female, and field shares between assigned=1 and assigned=0 (t-tests, or equivalently regress each pre-treatment covariate on assigned and confirm the coefficient is statistically indistinguishable from zero). This is both a sanity check and something a "sophisticated consumer" will expect to see before trusting anything downstream.
+
+2. The naive (wrong) regression — mention it, then explain why you're not using it
+
+exam_score ~ hours_used (+ controls) — this is the trap. Since students self-selected into how much they used the tool, hours_used is endogenous: students who used it more hours likely differ in unobserved motivation/ability from those who used it less, even among the assigned group. Running this directly will give you a biased estimate, and Prof. Brandt explicitly says she wants you to address this, not ignore it. Show you understand this is wrong before moving past it.
+
+3. Intent-to-treat (ITT) — your main causal estimate of being assigned
+
+exam_score ~ assigned and then exam_score ~ assigned + gpa_prior + female + C(field).
+
+Since assigned is randomized, this coefficient is unbiased and causally interpretable — it's the effect of being offered access, averaged over compliers and never-takers alike. Running it with and without controls is itself a robustness check: under proper randomization, the coefficient on assigned should barely move when you add controls. If it does, that's worth flagging.
+
+4. First stage — quantify compliance
+
+hours_used ~ assigned (+ controls). This tells you how much assigned actually shifted usage — essentially the compliance rate. Report it alongside descriptive stats (e.g., what fraction of assigned students used zero hours, mean hours among users, etc.). This is also the "relevance" condition for the IV approach next.
+
+5. IV / 2SLS — the effect of actually using the tool
+
+Instrument hours_used with assigned in a two-stage least squares regression to recover the local average treatment effect (LATE): the effect of usage among students who would use the tool if and only if assigned. Since access was strictly one-sided (no control student could get in), there are no "always-takers," which makes the LATE interpretation especially clean here — it's essentially the effect on compliers, full stop. This is the number that answers "the overall causal effect of using the tool on exam scores" most directly, as opposed to the ITT which answers the effect of the offer.
+
+6. Heterogeneity — subgroup effects
+
+Interact assigned with subgroup indicators rather than splitting the sample (more power, and gives you a direct significance test on the interaction term):
+
+exam_score ~ assigned*female + gpa_prior + C(field)
+exam_score ~ assigned*C(field) + gpa_prior + female
+exam_score ~ assigned*gpa_prior + female + C(field) (does the effect scale with prior ability?)
+
+If you want to go further, you can also let the IV effect vary by subgroup (interact the instrument with the subgroup dummy), but interacted ITT regressions are usually sufficient and easier to justify to a methodologically sharp reader. If you test several subgroups, flag that you're aware of multiple-testing concerns (e.g., mention Bonferroni or just be conservative in how strongly you word any single significant interaction).
+
+7. Robustness
+
+Heteroskedasticity-robust (HC1) standard errors throughout, since exam scores likely aren't homoskedastic across groups.
+The controls-in/controls-out comparison from step 3.
+A falsification/placebo check: regress a pre-treatment variable (like gpa_prior) on assigned and confirm no effect — reinforces the balance check from step 1 but frame it explicitly as a falsification test in the report.
+
+The throughline Prof. Brandt is grading for: ITT tells you the effect of the policy (offering access), IV/LATE tells you the effect of the tool itself conditional on compliance, and naive OLS on hours_used is the wrong number entirely. Structuring your report around that distinction is what she means by "methodological challenges... when compliance is imperfect."
