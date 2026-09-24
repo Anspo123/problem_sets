@@ -15,6 +15,7 @@ from pathlib import Path
 import pandas as pd
 import statsmodels.formula.api as smf
 import matplotlib.pyplot as plt
+from linearmodels.iv import IV2SLS
 
 # -----------------------
 # FUNCTIONS
@@ -89,31 +90,69 @@ class DataAnalysis:
         return y, x
 
 
-    def regression(self, model, y, x):
+    def ols_regression(self, y, x):
 
-        if model.upper() == "OLS":
-            formula = f"{y} ~ {x}"
+        formula = f"{y} ~ {x}"
 
-            result = smf.ols(
-                formula=formula,
-                data=self.df
-            ).fit(
-                cov_type="HC1",
-                use_t=True
+        result = smf.ols(
+            formula=formula,
+            data=self.df
+        ).fit(
+            cov_type="HC1",
+            use_t=True
+        )
+
+        print(result.summary2(float_format="%.3f"))
+
+        return result
+
+
+    def iv_regression(
+        self,
+        y,
+        endogenous,
+        instrument,
+        controls=None
+    ):
+
+        if controls:
+            formula = (
+                f"{y} ~ 1 + {controls} "
+                f"+ [{endogenous} ~ {instrument}]"
             )
 
         else:
-            raise ValueError(f"Unknown regression model: {model}")
+            formula = (
+                f"{y} ~ 1 "
+                f"+ [{endogenous} ~ {instrument}]"
+            )
 
-        print(result.summary())
+        result = IV2SLS.from_formula(
+            formula=formula,
+            data=self.df
+        ).fit(
+            cov_type="robust"
+        )
+
+        print(result.summary)
 
         return result
 
 
     def save_results_as_text(self, result, output_path):
 
+        # Statsmodels: 
+        if hasattr(result, "summary2"):
+            summary = result.summary2(
+                float_format="%.3f"
+            )
+
+        # Linearmodels: 
+        else:
+            summary = result.summary
+
         with open(output_path, "w", encoding="utf-8") as file:
-            file.write(result.summary().as_text())
+            file.write(summary.as_text())
 
 
 class VisualizeData:
@@ -271,7 +310,7 @@ def main():
             "Exam Score [0-100]",
             "Prior GPA [0.0-4.0]",
         ],
-        "Figure 2: Scatter Matrix of Non-binary Variables",
+        "Figure 1: Scatter Matrix of Non-binary Variables",
         output_path / "scatter_matrix_ai.png"
     )
 
@@ -279,56 +318,146 @@ def main():
     visualize_data.create_chart(
                 "BOXPLOT",
                 "exam_score",
-                "field",
-                "Ecam Score over Field",
-                "Field",
+                "female",
+                "Figure 2: Exam Score over Gender",
+                "Female = 1",
                 "Exam Score [0-100]",
-                output_path / "boxplot_field_score.png"
+                output_path / "boxplot_gender_score.png"
     )
 
     # -----------------------
-    # 2. Regressions:
+    # 2. IV-regression:
     # -----------------------
     """
-    Regressions.
+    With "assigned" as instrument.
     """
-    # OLS-regression:
+    # -----------------
+    # Without controls:
+    # -----------------
+    # First stage:
+
     print()
     print("REGRESSION 1:")
+    iv_result1 = analyze_data.iv_regression(
+        y="exam_score",
+        endogenous="hours_used",
+        instrument="assigned"
+    )
 
-    result1 = analyze_data.regression(
-        model="OLS",
+    print()
+    print("First stage:")
+    print(iv_result1.first_stage.summary)
+
+    analyze_data.save_results_as_text(iv_result1, output_path / "table_1.txt")
+
+    # -----------------
+    # With controls:
+    # -----------------
+    print()
+    print("REGRESSION 2:")
+    iv_result2 = analyze_data.iv_regression(
+        y="exam_score",
+        endogenous="hours_used",
+        instrument="assigned",
+        controls="gpa_prior + female + C(field)"
+    )
+
+    print()
+    print("First stage (controls):")
+    print(iv_result2.first_stage.summary)
+
+    analyze_data.save_results_as_text(iv_result2, output_path / "table_2.txt")
+
+    # -----------------------
+    # 3. Intention-to-treat:
+    #  / Reduced form
+    # -----------------------
+    """
+    Correlation between "assigned" and exam score.
+    """
+    # -----------------
+    # Without controls:
+    # -----------------
+    print()
+    print("REGRESSION 3:")
+
+    itt_result1 = analyze_data.ols_regression(
         y="exam_score",
         x="assigned"
     )
 
-    analyze_data.save_results_as_text(result1, output_path / "tabel_1.txt")
+    analyze_data.save_results_as_text(itt_result1, output_path / "table_3.txt")
 
-    # OLS-regression with controls:
+    # -----------------
+    # With controls:
+    # -----------------
     print()
-    print("REGRESSION 2:")
+    print("REGRESSION 4:")
 
-    result2 = analyze_data.regression(
-        model="OLS",
+    itt_result2 = analyze_data.ols_regression(
         y="exam_score",
         x="assigned + gpa_prior + female + C(field)"
     )
 
-    analyze_data.save_results_as_text(result2, output_path / "tabel_2.txt")
+    analyze_data.save_results_as_text(itt_result2, output_path / "table_4.txt")
 
-
-    # IV-regression:
+    # -----------------------
+    # 3. OLS:
+    # -----------------------
+    # -----------------
+    # Without controls:
+    # -----------------
     print()
-    print("REGRESSION 3:")
+    print("REGRESSION 5:")
 
-    result3 = analyze_data.regression(
-        model="OLS",
+    ols_result1 = analyze_data.ols_regression(
         y="exam_score",
-        x="assigned * female + gpa_prior"
+        x="hours_used"
     )
 
-    analyze_data.save_results_as_text(result3, output_path / "tabel_3.txt")
+    analyze_data.save_results_as_text(ols_result1, output_path / "table_5.txt")
 
+    # -----------------
+    # With controls:
+    # -----------------
+    print()
+    print("REGRESSION 5:")
+
+    ols_result2 = analyze_data.ols_regression(
+        y="exam_score",
+        x="hours_used + gpa_prior + female + C(field)"
+    )
+
+    analyze_data.save_results_as_text(ols_result2, output_path / "table_6.txt")
+
+    # -----------------------
+    # 4. Interaction var.:
+    # -----------------------
+    # -----------------
+    # Female x Assigned:
+    # -----------------
+    print()
+    print("REGRESSION 7:")
+
+    ols_result1 = analyze_data.ols_regression(
+        y="exam_score",
+        x="female * assigned"
+    )
+
+    analyze_data.save_results_as_text(ols_result1, output_path / "table_7.txt")
+
+    # -----------------
+    # Field x Assigned:
+    # -----------------
+    print()
+    print("REGRESSION 8:")
+
+    ols_result2 = analyze_data.ols_regression(
+        y="exam_score",
+        x="assigned * C(field)"
+    )
+
+    analyze_data.save_results_as_text(ols_result2, output_path / "table_8.txt")
 
 # -----------------------
 # MAIN GUARD
