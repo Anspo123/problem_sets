@@ -1,0 +1,39 @@
+The pilot has a sharp on/off timing structure, and assignment doesn't equal actual use. That makes it a fuzzy regression discontinuity in time, with two cutoffs: switch-on at 11:30 and switch-off at 14:30. Here's the set of regressions I'd run.
+
+1. Benchmarks (to show why they fail)
+
+Naive OLS: delivery_time ~ used_routeoptima (with and without covariates). This is biased twice over: lunch-hour conditions differ from the rest of the day, and who actually got RouteOptima within the window may be selected.
+Window comparison: delivery_time ~ assigned_routeoptima. This is an intention-to-treat effect, but it compares lunch rush to off-peak, so it's confounded by time of day.
+
+2. Main estimates: fuzzy RD at each cutoff
+
+At each cutoff, use only data close to it (local linear, triangular kernel):
+
+First stage: used ~ assigned + running variable + assigned × running variable. This shows how much the probability of actually using RouteOptima jumps at the cutoff. Report it and its F-statistic.
+Reduced form: the same regression with delivery time as the outcome.
+Fuzzy RD / 2SLS: instrument used with assigned. The estimate is the reduced-form jump divided by the first-stage jump, which is a LATE for compliers.
+
+The running variable is minutes_from_switch_on at 11:30 and minutes_from_switch_off at 14:30. At switch-off, treatment goes from 1 to 0, so check the sign. Present the two cutoffs separately first, then pooled. If they disagree, that's informative in itself: it could point to lunch-rush confounding, or the effect may depend on congestion.
+
+One constraint: the window is only 180 minutes long. Inside-window bandwidths above 90 minutes make the two cutoffs share observations, so cap them there or say explicitly that they overlap.
+
+3. Validity checks (Q2)
+
+Covariate balance: run the same RD with distance, prep time, rain and driver experience as outcomes. None of them should jump at the cutoffs.
+Density check: test whether order volume jumps at 11:30 or 14:30. Bin orders by minute and run an RD on the counts.
+Placebo cutoffs: run the RD at fake times (e.g. 10:30, 13:00, 16:00, 18:00). A "jump" at dinner rush would be a warning sign.
+Compliance: regress used on the covariates within the window. If non-use is related to rain or distance, that affects how to interpret the complier LATE.
+
+4. Robustness (Q2)
+
+Bandwidth: a grid (e.g. 15/30/45/60/90 min, or ½×, 1× and 2× an optimal bandwidth), plotted as estimate against bandwidth.
+Specification: local linear vs. local quadratic, and triangular vs. uniform kernel. Avoid high-order global polynomials.
+Covariates: add them. The estimate should barely move, and the standard errors should shrink.
+Donut RD: drop orders within a few minutes of each cutoff. Orders placed just before 14:30 may still be in transit after the switch, which could contaminate the comparison.
+Standard errors: robust, and possibly clustered by time bin, because deliveries close together in time share traffic and weather shocks.
+
+5. Optional: heterogeneity
+
+Interact treatment with rain or distance. This is useful for Q3, since the effect measured in one lunch rush may not carry over to other hours or conditions.
+
+I've only seen the assignment sheet, not your lecture notes. The names and notation above are generic. If your course sets up fuzzy RD or IV in a particular way (e.g. Wald estimator vs. 2SLS, a specific bandwidth selector), send me the relevant slides and I'll switch to that notation. Once you have the CSV, I can also write the replication script in whichever language you're using.
