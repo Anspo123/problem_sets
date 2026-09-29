@@ -8,21 +8,26 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import pandas as pd
 import statsmodels.formula.api as smf
-from linearmodels.iv import IV2SLS
-from rdrobust import rdbwselect
+from rdrobust import rdbwselect, rdrobust
 
 
 # -----------------------
-# SETTINGS
+# PATHS AND VARIABLES
 # -----------------------
+data_path = Path(
+    "5304/problem_set_3/input/quickbite_deliveries.csv"
+)
 
-input_path = Path("5304") / "problem_set_3" / "input"
-output_path = Path("5304") / "problem_set_3" / "output"
+output_path = Path(
+    "5304/problem_set_3/output"
+)
 
-data_path = input_path / "quickbite_deliveries.csv"
+output_path.mkdir(
+    parents=True,
+    exist_ok=True
+)
 
 outcome = "delivery_time_min"
-running_variable = "minutes_from_switch_on"
 treatment = "used_routeoptima"
 
 controls = [
@@ -32,479 +37,502 @@ controls = [
     "driver_experience_months"
 ]
 
+cutoffs = {
+    "switch_on": "minutes_from_switch_on",
+    "switch_off": "minutes_from_switch_off"
+}
+
 
 # -----------------------
-# DATA PREPARATION
+# LOAD DATA
 # -----------------------
+df = pd.read_csv(data_path)
 
-def load_data(path):
-    """Load the QuickBite data."""
+required_variables = [
+    outcome,
+    treatment,
+    "assigned_routeoptima",
+    "minutes_from_switch_on",
+    "minutes_from_switch_off"
+] + controls
 
-    if not path.exists():
-        raise FileNotFoundError(f"File not found: {path}")
+df = (
+    df.dropna(subset=required_variables)
+    .drop_duplicates()
+    .reset_index(drop=True)
+)
 
-    return pd.read_csv(path)
 
+# -----------------------
+# DESCRIPTIVE TABLE
+# -----------------------
+def descriptive_statistics(df, variables):
+    """Create descriptive statistics by assignment status."""
 
-def prepare_data(df):
-    """Clean the variables needed for the RDD."""
+    tables = []
 
-    required_variables = [
-        outcome,
-        running_variable,
-        treatment,
-        "assigned_routeoptima"
-    ] + controls
+    group_names = {
+        0: "Not assigned",
+        1: "Assigned"
+    }
 
-    missing_variables = [
-        variable
-        for variable in required_variables
-        if variable not in df.columns
-    ]
+    for value, name in group_names.items():
+        group_data = df[
+            df["assigned_routeoptima"] == value
+        ]
 
-    if missing_variables:
-        raise KeyError(
-            f"Missing variables: {missing_variables}"
+        statistics = (
+            group_data[variables]
+            .agg(["count", "mean", "std"])
+            .T
+            .rename(
+                columns={
+                    "count": f"N: {name}",
+                    "mean": f"Mean: {name}",
+                    "std": f"SD: {name}"
+                }
+            )
         )
 
-    data = df.drop_duplicates().copy()
+        tables.append(statistics)
 
-    data.sort_values(
-        by="delivery_id",
-        inplace=True
-    )
+    stat_table = pd.concat(
+        tables,
+        axis=1
+    ).round(2)
 
-    data.reset_index(
-        drop=True,
-        inplace=True
-    )
-
-    # Convert relevant variables to numeric
-    for variable in required_variables:
-        data[variable] = pd.to_numeric(
-            data[variable],
-            errors="coerce"
-        )
-
-    data = data.dropna(subset=required_variables).copy()
-
-    # The cutoff is zero
-    data["above_cutoff"] = (
-        data[running_variable] >= 0
-    ).astype(int)
-
-    # Allow the slope to differ on either side of the cutoff
-    data["running_above"] = (
-        data[running_variable] * data["above_cutoff"]
-    )
-
-    return data
-
-
-def select_bandwidth(df, bandwidth):
-    """Keep observations close to the cutoff."""
-
-    return df[
-        df[running_variable].abs() <= bandwidth
-    ].copy()
+    return stat_table
 
 
 # -----------------------
-# DESCRIPTIVE STATISTICS
+# SCATTER DATA
 # -----------------------
-
-def descriptive_statistics(df):
-    """Create descriptive statistics around the cutoff."""
+def cutoff_scatter(
+    df,
+    running,
+    window,
+    filename
+):
+    """Plot the data around one cutoff."""
 
     variables = [
-        outcome,
-        treatment,
-        "assigned_routeoptima",
-        running_variable
-    ] + controls
+        (
+            "assigned_routeoptima",
+            "Assigned RouteOptima"
+        ),
+        (
+            "used_routeoptima",
+            "Used RouteOptima"
+        ),
+        (
+            "delivery_time_min",
+            "Delivery Time [min]"
+        )
+    ]
 
-    table = (
-        df.groupby("above_cutoff")[variables]
-        .agg(["count", "mean", "std"])
-        .round(3)
+    sample = df[
+        df[running].abs() <= window
+    ].copy()
+
+    figure, axes = plt.subplots(
+        nrows=3,
+        ncols=1,
+        figsize=(8, 10),
+        sharex=True
     )
 
-    return table
+    for axis, (variable, label) in zip(
+        axes,
+        variables
+    ):
+        # Raw observations
+        axis.scatter(
+            sample[running],
+            sample[variable],
+            color="lightgrey",
+            alpha=0.25,
+            s=10
+        )
+
+        # Divide the running variable into time bins
+        sample["plot_bin"] = pd.cut(
+            sample[running],
+            bins=20
+        )
+
+        # Calculate the average within each bin
+        binned_data = (
+            sample.groupby(
+                "plot_bin",
+                observed=True
+            )
+            .agg(
+                x_mean=(running, "mean"),
+                y_mean=(variable, "mean")
+            )
+            .reset_index()
+        )
+
+        axis.scatter(
+            binned_data["x_mean"],
+            binned_data["y_mean"],
+            color="darkblue",
+            s=35
+        )
+
+        axis.axvline(
+            x=0,
+            color="black",
+            linestyle="--"
+        )
+
+        axis.set_ylabel(label)
+        axis.grid(alpha=0.2)
+
+    axes[-1].set_xlabel(
+        "Minutes from cutoff"
+    )
+
+    figure.tight_layout()
+
+    figure.savefig(
+        output_path / filename,
+        dpi=300
+    )
+
+    plt.close(figure)
 
 
 # -----------------------
-# RDD REGRESSIONS
+# OPT. BANDWIDTH
 # -----------------------
-def select_optimal_bandwidth(df):
-    """Find the MSE-optimal bandwidth for the fuzzy RDD."""
+def select_optimal_bandwidth(
+    running,
+    add_controls,
+    polynomial_degree
+):
+    """Select optimal bandwidth."""
 
-    result = rdbwselect(
-        y=df["delivery_time_min"],
-        x=df["minutes_from_switch_on"],
+    covariates = (
+        df[controls]
+        if add_controls
+        else None
+    )
+
+    bandwidth_result = rdbwselect(
+        y=df[outcome],
+        x=df[running],
+        fuzzy=df[treatment],
+        covs=covariates,
         c=0,
-        fuzzy=df["used_routeoptima"],
-        covs=df[controls],
-        p=1,
+        p=polynomial_degree,
         kernel="tri",
         bwselect="mserd"
     )
 
-    print(result)
+    bandwidth = float(
+        bandwidth_result.bws.loc[
+            "mserd",
+            "h (left)"
+        ]
+    )
 
-    bandwidth = result.bws.loc[
-        "mserd",
-        "h (left)"
-    ]
+    return bandwidth
 
-    return float(bandwidth)
 
-def estimate_first_stage(df, controls=None):
-    """
-    Test whether crossing the cutoff changes the probability
-    of using RouteOptima.
-    """
+# -----------------------
+# REGRESSIONS
+# -----------------------
+def estimate_rdd(running, add_controls, bandwidth, polynomial_degree):
+    """Estimate fuzzy RDD and first stage."""
 
-    controls = controls or []
+    polynomial_degree = int(polynomial_degree)
 
+    covariates = (
+        df[controls]
+        if add_controls
+        else None
+    )
+
+    # Estimate fuzzy RDD
+    fuzzy_rdd = rdrobust(
+        y=df[outcome],
+        x=df[running],
+        fuzzy=df[treatment],
+        covs=covariates,
+        c=0,
+        p=polynomial_degree,
+        h=bandwidth,
+        kernel="tri"
+    )
+
+    # Select observations inside the bandwidth
+    sample = df[
+        df[running].abs() <= bandwidth
+    ].copy()
+
+    sample["assigned_x_running"] = (
+        sample["assigned_routeoptima"]
+        * sample[running]
+    )
+
+    # First-stage regression
     formula = (
         f"{treatment} ~ "
-        f"above_cutoff + "
-        f"{running_variable} + "
-        f"running_above"
+        f"assigned_routeoptima + "
+        f"{running} + "
+        "assigned_x_running"
     )
 
-    if controls:
+    if add_controls:
         formula += " + " + " + ".join(controls)
 
-    result = smf.ols(
+    first_stage = smf.ols(
         formula=formula,
-        data=df
+        data=sample
     ).fit(cov_type="HC1")
 
-    return result
-
-
-def estimate_reduced_form(df, controls=None):
-    """
-    Estimate the effect of crossing the cutoff on delivery time.
-    This is the intention-to-treat effect.
-    """
-
-    controls = controls or []
-
-    formula = (
-        f"{outcome} ~ "
-        f"above_cutoff + "
-        f"{running_variable} + "
-        f"running_above"
-    )
-
-    if controls:
-        formula += " + " + " + ".join(controls)
-
-    result = smf.ols(
-        formula=formula,
-        data=df
-    ).fit(cov_type="HC1")
-
-    return result
-
-
-def estimate_fuzzy_rdd(df, controls=None):
-    """
-    Estimate the causal effect of using RouteOptima.
-
-    Crossing the cutoff is used as an instrument for actual
-    RouteOptima use.
-    """
-
-    controls = controls or []
-
-    exogenous_variables = [
-        running_variable,
-        "running_above"
-    ] + controls
-
-    formula = (
-        f"{outcome} ~ 1 + "
-        f"{' + '.join(exogenous_variables)} "
-        f"+ [{treatment} ~ above_cutoff]"
-    )
-
-    result = IV2SLS.from_formula(
-        formula=formula,
-        data=df
-    ).fit(cov_type="robust")
-
-    return result
+    return fuzzy_rdd, first_stage
 
 
 # -----------------------
 # RDD FIGURE
 # -----------------------
+def rdd_plot(running, y, bandwidth, filename):
+    """Plot binned averages and fitted lines."""
 
-def create_rdd_plot(df, bandwidth, output_path, number_of_bins=10):
-    """Create binned averages and local regression lines."""
+    sample = df[
+        df[running].abs() <= bandwidth
+    ][[running, y]].copy()
 
-    plot_data = select_bandwidth(df, bandwidth)
-
-    left = plot_data[
-        plot_data[running_variable] < 0
-    ].copy()
-
-    right = plot_data[
-        plot_data[running_variable] >= 0
-    ].copy()
-
-    # Bins are only used for the figure
-    left["bin"] = pd.qcut(
-        left[running_variable],
-        q=number_of_bins,
-        duplicates="drop"
+    sample["side"] = (
+        sample[running] >= 0
     )
 
-    right["bin"] = pd.qcut(
-        right[running_variable],
-        q=number_of_bins,
-        duplicates="drop"
+    # Create ten bins on each side
+    sample["bin"] = (
+        sample.groupby("side")[running]
+        .transform(
+            lambda x: pd.qcut(
+                x,
+                10,
+                labels=False,
+                duplicates="drop"
+            )
+        )
     )
 
-    left_bins = (
-        left.groupby("bin", observed=True)
+    points = (
+        sample.groupby(
+            ["side", "bin"],
+            observed=True
+        )
         .agg(
-            running_mean=(running_variable, "mean"),
-            outcome_mean=(outcome, "mean")
+            x=(running, "mean"),
+            y=(y, "mean")
         )
         .reset_index()
     )
 
-    right_bins = (
-        right.groupby("bin", observed=True)
-        .agg(
-            running_mean=(running_variable, "mean"),
-            outcome_mean=(outcome, "mean")
+    plt.figure(figsize=(7, 4))
+
+    for side, color, label in [
+        (False, "steelblue", "Before cutoff"),
+        (True, "darkorange", "After cutoff")
+    ]:
+        side_data = sample[
+            sample["side"] == side
+        ].copy()
+
+        side_points = points[
+            points["side"] == side
+        ]
+
+        # Observed binned averages
+        plt.scatter(
+            side_points["x"],
+            side_points["y"],
+            color=color,
+            label=label
         )
-        .reset_index()
-    )
 
-    # Fit separate lines on either side
-    left_line = smf.ols(
-        f"{outcome} ~ {running_variable}",
-        data=left
-    ).fit()
+        # Fitted line
+        model = smf.ols(
+            formula=f"{y} ~ {running}",
+            data=side_data
+        ).fit()
 
-    right_line = smf.ols(
-        f"{outcome} ~ {running_variable}",
-        data=right
-    ).fit()
+        side_data = side_data.sort_values(running)
 
-    left = left.sort_values(running_variable)
-    right = right.sort_values(running_variable)
-
-    plt.figure(figsize=(8, 5))
-
-    plt.scatter(
-        left_bins["running_mean"],
-        left_bins["outcome_mean"],
-        color="steelblue",
-        label="Before switch-on"
-    )
-
-    plt.scatter(
-        right_bins["running_mean"],
-        right_bins["outcome_mean"],
-        color="darkorange",
-        label="After switch-on"
-    )
-
-    plt.plot(
-        left[running_variable],
-        left_line.predict(left),
-        color="steelblue"
-    )
-
-    plt.plot(
-        right[running_variable],
-        right_line.predict(right),
-        color="darkorange"
-    )
+        plt.plot(
+            side_data[running],
+            model.predict(side_data),
+            color=color
+        )
 
     plt.axvline(
-        x=0,
+        0,
         color="black",
         linestyle="--",
         label="Cutoff"
     )
 
-    plt.xlabel("Minutes from switch-on")
-    plt.ylabel("Average delivery time [min]")
-    plt.title("RDD plot: RouteOptima switch-on")
+    plt.xlabel("Minutes from cutoff")
+    plt.ylabel(y.replace("_", " ").title())
     plt.legend()
     plt.tight_layout()
-    plt.savefig(output_path, dpi=300)
+
+    plt.savefig(
+        output_path / filename,
+        dpi=300
+    )
+
     plt.close()
-
-
-# -----------------------
-# ROBUSTNESS
-# -----------------------
-
-def bandwidth_robustness(df, bandwidths):
-    """Estimate the fuzzy RDD using different bandwidths."""
-
-    results = []
-
-    for bandwidth in bandwidths:
-        sample = select_bandwidth(df, bandwidth)
-
-        model = estimate_fuzzy_rdd(
-            sample,
-            controls=controls
-        )
-
-        results.append({
-            "bandwidth": bandwidth,
-            "observations": model.nobs,
-            "effect": model.params[treatment],
-            "standard_error": model.std_errors[treatment],
-            "p_value": model.pvalues[treatment]
-        })
-
-    return pd.DataFrame(results)
 
 
 # -----------------------
 # SAVE RESULTS
 # -----------------------
+def save_results(
+    first_stage,
+    fuzzy_rdd,
+    bandwidth,
+    filename
+):
+    """Save first stage and fuzzy RDD in one file."""
 
-def save_result(result, path):
-    """Save a regression result as a text file."""
-
-    if hasattr(result, "summary2"):
-        text = result.summary2(
-            float_format="%.3f"
-        ).as_text()
-    else:
-        text = result.summary.as_text()
-
-    path.write_text(text, encoding="utf-8")
-
-
-# -----------------------
-# MAIN
-# -----------------------
-
-def main():
-    output_path.mkdir(parents=True, exist_ok=True)
-
-    # Load and prepare data
-    raw_df = load_data(data_path)
-    data_df = prepare_data(raw_df)
-
-    data_df.to_csv(
-        output_path / "clean_quickbite_data.csv",
-        index=False
+    text = (
+        f"Optimal bandwidth: {bandwidth:.2f}\n\n"
+        "FIRST STAGE\n"
+        "===========\n"
+        f"{first_stage.summary().as_text()}\n\n"
+        "FUZZY RDD\n"
+        "=========\n"
+        f"{fuzzy_rdd}"
     )
 
-    optimal_bandwith = select_optimal_bandwidth(data_df)
+    (output_path / filename).write_text(
+        text,
+        encoding="utf-8"
+    )
+
+
+# -----------------------
+# DESCRIPTIVE STATS.
+# -----------------------
+descriptive_variables = [
+    "delivery_time_min",
+    "used_routeoptima",
+    "distance_km",
+    "restaurant_prep_min",
+    "rain",
+    "driver_experience_months"
+]
+
+stat_table = descriptive_statistics(
+    df=df,
+    variables=descriptive_variables
+)
+
+(
+    output_path / "descriptive_statistics.txt"
+).write_text(
+    stat_table.to_string(),
+    encoding="utf-8"
+)
+
+
+# -----------------------
+# SCATTER
+# -----------------------
+cutoff_scatter(
+    df=df,
+    running="minutes_from_switch_on",
+    window=120,
+    filename="descriptive_switch_on.png"
+)
+
+cutoff_scatter(
+    df=df,
+    running="minutes_from_switch_off",
+    window=120,
+    filename="descriptive_switch_off.png"
+)
+
+
+# -----------------------
+# RUN ANALYSIS
+# -----------------------
+bandwidth = 60
+
+for name, running in cutoffs.items():
+    local_sample = df[
+        df[running].abs() <= bandwidth
+    ].copy()
+
+    local_sample["after_cutoff"] = (
+        local_sample[running] >= 0
+    )
+
+    print(f"\n{name}")
 
     print(
-        f"Optimal bandwidth: "
-        f"{optimal_bandwith:.2f} minutes"
+        local_sample.groupby("after_cutoff")[
+            [
+                "assigned_routeoptima",
+                "used_routeoptima"
+            ]
+        ].mean()
     )
 
-    rdd_df = select_bandwidth(
-        data_df,
-        optimal_bandwith
+for cutoff_name, running in cutoffs.items():
+    plot_bandwidth = None
+
+    for add_controls in [False, True]:
+        specification = (
+            "with_controls"
+            if add_controls
+            else "without_controls"
+        )
+
+        optimal_bandwidth = select_optimal_bandwidth(
+            running=running,
+            add_controls=add_controls,
+            polynomial_degree=1
+        )
+
+        fuzzy_rdd, first_stage = estimate_rdd(
+            running=running,
+            add_controls=add_controls,
+            bandwidth=optimal_bandwidth,
+            polynomial_degree=1
+        )
+
+        save_results(
+            first_stage=first_stage,
+            fuzzy_rdd=fuzzy_rdd,
+            bandwidth=optimal_bandwidth,
+            filename=(
+                f"results_{cutoff_name}_"
+                f"{specification}.txt"
+            )
+        )
+
+        if add_controls:
+            plot_bandwidth = optimal_bandwidth
+
+    # Delivery-time figure
+    rdd_plot(
+        running=running,
+        y=outcome,
+        bandwidth=plot_bandwidth,
+        filename=f"outcome_{cutoff_name}.png"
     )
 
-    # Main sample around the cutoff
-    rdd_df = select_bandwidth(
-        data_df,
-        optimal_bandwith
+    # First-stage figure
+    rdd_plot(
+        running=running,
+        y=treatment,
+        bandwidth=plot_bandwidth,
+        filename=f"first_stage_{cutoff_name}.png"
     )
-
-    print(f"Observations in RDD sample: {len(rdd_df)}")
-
-    # Descriptive statistics
-    descriptive_table = descriptive_statistics(rdd_df)
-
-    descriptive_table.to_csv(
-        output_path / "descriptive_statistics.csv"
-    )
-
-    # First stage
-    first_stage = estimate_first_stage(
-        rdd_df,
-        controls=controls
-    )
-
-    print("\nFIRST STAGE")
-    print(first_stage.summary())
-
-    save_result(
-        first_stage,
-        output_path / "first_stage.txt"
-    )
-
-    # Reduced form / intention-to-treat
-    reduced_form = estimate_reduced_form(
-        rdd_df,
-        controls=controls
-    )
-
-    print("\nREDUCED FORM")
-    print(reduced_form.summary())
-
-    save_result(
-        reduced_form,
-        output_path / "reduced_form.txt"
-    )
-
-    # Fuzzy RDD
-    fuzzy_rdd = estimate_fuzzy_rdd(
-        rdd_df,
-        controls=controls
-    )
-
-    print("\nFUZZY RDD")
-    print(fuzzy_rdd.summary)
-
-    save_result(
-        fuzzy_rdd,
-        output_path / "fuzzy_rdd.txt"
-    )
-
-    # RDD plot
-    create_rdd_plot(
-        data_df,
-        bandwidth=optimal_bandwith,
-        output_path=output_path / "rdd_plot.png"
-    )
-
-    # Robustness to bandwidth choice
-    robustness_table = bandwidth_robustness(
-        data_df,
-        bandwidths=[30, 45, 60, 90, 120]
-    )
-
-    print("\nBANDWIDTH ROBUSTNESS")
-    print(robustness_table.round(3))
-
-    robustness_table.to_csv(
-        output_path / "bandwidth_robustness.csv",
-        index=False
-    )
-
-
-if __name__ == "__main__":
-    try:
-        main()
-
-    except (
-        FileNotFoundError,
-        KeyError,
-        ValueError,
-        OSError
-    ) as error:
-        print(f"Error: {error}")
