@@ -8,12 +8,14 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import pandas as pd
 import statsmodels.formula.api as smf
+
 from rdrobust import rdbwselect, rdrobust
 
 
 # -----------------------
 # PATHS AND VARIABLES
 # -----------------------
+
 data_path = Path(
     "5304/problem_set_3/input/quickbite_deliveries.csv"
 )
@@ -46,6 +48,7 @@ cutoffs = {
 # -----------------------
 # LOAD DATA
 # -----------------------
+
 df = pd.read_csv(data_path)
 
 required_variables = [
@@ -66,6 +69,7 @@ df = (
 # -----------------------
 # DESCRIPTIVE TABLE
 # -----------------------
+
 def descriptive_statistics(df, variables):
     """Create descriptive statistics by assignment status."""
 
@@ -107,6 +111,7 @@ def descriptive_statistics(df, variables):
 # -----------------------
 # SCATTER DATA
 # -----------------------
+
 def cutoff_scatter(
     df,
     running,
@@ -206,6 +211,7 @@ def cutoff_scatter(
 # -----------------------
 # OPT. BANDWIDTH
 # -----------------------
+
 def select_optimal_bandwidth(
     running,
     add_controls,
@@ -243,8 +249,14 @@ def select_optimal_bandwidth(
 # -----------------------
 # REGRESSIONS
 # -----------------------
-def estimate_rdd(running, add_controls, bandwidth, polynomial_degree):
-    """Estimate fuzzy RDD and first stage."""
+
+def estimate_rdd(
+    running,
+    add_controls,
+    bandwidth,
+    polynomial_degree
+):
+    """Estimate fuzzy RDD and a weighted first stage."""
 
     polynomial_degree = int(polynomial_degree)
 
@@ -255,6 +267,7 @@ def estimate_rdd(running, add_controls, bandwidth, polynomial_degree):
     )
 
     # Estimate fuzzy RDD
+    # rdrobust retains its normal-based inference.
     fuzzy_rdd = rdrobust(
         y=df[outcome],
         x=df[running],
@@ -266,10 +279,16 @@ def estimate_rdd(running, add_controls, bandwidth, polynomial_degree):
         kernel="tri"
     )
 
-    # Select observations inside the bandwidth
+    # Observations at the bandwidth boundary have zero
+    # triangular weight and are excluded from this regression.
     sample = df[
-        df[running].abs() <= bandwidth
+        df[running].abs() < bandwidth
     ].copy()
+
+    # Triangular kernel weights
+    sample["kernel_weight"] = (
+        1 - sample[running].abs() / bandwidth
+    )
 
     sample["assigned_x_running"] = (
         sample["assigned_routeoptima"]
@@ -284,13 +303,38 @@ def estimate_rdd(running, add_controls, bandwidth, polynomial_degree):
         "assigned_x_running"
     )
 
+    # Include higher-order terms and interactions when p > 1.
+    for degree in range(2, polynomial_degree + 1):
+        power_name = f"running_power_{degree}"
+        interaction_name = f"assigned_x_power_{degree}"
+
+        sample[power_name] = (
+            sample[running] ** degree
+        )
+
+        sample[interaction_name] = (
+            sample["assigned_routeoptima"]
+            * sample[power_name]
+        )
+
+        formula += (
+            f" + {power_name}"
+            f" + {interaction_name}"
+        )
+
     if add_controls:
         formula += " + " + " + ".join(controls)
 
-    first_stage = smf.ols(
+    # Weighted regression with robust standard errors
+    # and t-based p-values and confidence intervals.
+    first_stage = smf.wls(
         formula=formula,
-        data=sample
-    ).fit(cov_type="HC1")
+        data=sample,
+        weights=sample["kernel_weight"]
+    ).fit(
+        cov_type="HC1",
+        use_t=True
+    )
 
     return fuzzy_rdd, first_stage
 
@@ -298,8 +342,15 @@ def estimate_rdd(running, add_controls, bandwidth, polynomial_degree):
 # -----------------------
 # RDD FIGURE
 # -----------------------
-def rdd_plot(running, y, bandwidth, filename):
-    """Plot binned averages and fitted lines."""
+
+def rdd_plot(
+    running,
+    y,
+    bandwidth,
+    polynomial_degree,
+    filename
+):
+    """Plot binned averages and fitted polynomial lines."""
 
     sample = df[
         df[running].abs() <= bandwidth
@@ -309,7 +360,6 @@ def rdd_plot(running, y, bandwidth, filename):
         sample[running] >= 0
     )
 
-    # Create ten bins on each side
     sample["bin"] = (
         sample.groupby("side")[running]
         .transform(
@@ -334,6 +384,18 @@ def rdd_plot(running, y, bandwidth, filename):
         .reset_index()
     )
 
+    polynomial_terms = [
+        f"I({running} ** {degree})"
+        for degree in range(
+            1,
+            polynomial_degree + 1
+        )
+    ]
+
+    polynomial_formula = " + ".join(
+        polynomial_terms
+    )
+
     plt.figure(figsize=(7, 4))
 
     for side, color, label in [
@@ -348,7 +410,6 @@ def rdd_plot(running, y, bandwidth, filename):
             points["side"] == side
         ]
 
-        # Observed binned averages
         plt.scatter(
             side_points["x"],
             side_points["y"],
@@ -356,9 +417,10 @@ def rdd_plot(running, y, bandwidth, filename):
             label=label
         )
 
-        # Fitted line
         model = smf.ols(
-            formula=f"{y} ~ {running}",
+            formula=(
+                f"{y} ~ {polynomial_formula}"
+            ),
             data=side_data
         ).fit()
 
@@ -393,6 +455,7 @@ def rdd_plot(running, y, bandwidth, filename):
 # -----------------------
 # SAVE RESULTS
 # -----------------------
+
 def save_results(
     first_stage,
     fuzzy_rdd,
@@ -420,6 +483,7 @@ def save_results(
 # -----------------------
 # DESCRIPTIVE STATS.
 # -----------------------
+
 descriptive_variables = [
     "delivery_time_min",
     "used_routeoptima",
@@ -445,6 +509,7 @@ stat_table = descriptive_statistics(
 # -----------------------
 # SCATTER
 # -----------------------
+
 cutoff_scatter(
     df=df,
     running="minutes_from_switch_on",
@@ -461,8 +526,9 @@ cutoff_scatter(
 
 
 # -----------------------
-# RUN ANALYSIS
+# TEST DATA
 # -----------------------
+
 bandwidth = 60
 
 for name, running in cutoffs.items():
@@ -484,6 +550,11 @@ for name, running in cutoffs.items():
             ]
         ].mean()
     )
+
+
+# -----------------------
+# RUN p=1 ANALYSIS
+# -----------------------
 
 for cutoff_name, running in cutoffs.items():
     plot_bandwidth = None
@@ -526,6 +597,7 @@ for cutoff_name, running in cutoffs.items():
         running=running,
         y=outcome,
         bandwidth=plot_bandwidth,
+        polynomial_degree=1,
         filename=f"outcome_{cutoff_name}.png"
     )
 
@@ -534,5 +606,65 @@ for cutoff_name, running in cutoffs.items():
         running=running,
         y=treatment,
         bandwidth=plot_bandwidth,
+        polynomial_degree=1,
         filename=f"first_stage_{cutoff_name}.png"
+    )
+
+
+# -----------------------
+# RUN p=2 ANALYSIS
+# -----------------------
+
+for cutoff_name, running in cutoffs.items():
+    plot_bandwidth = None
+
+    for add_controls in [False, True]:
+        specification = (
+            "with_controls"
+            if add_controls
+            else "without_controls"
+        )
+
+        optimal_bandwidth = select_optimal_bandwidth(
+            running=running,
+            add_controls=add_controls,
+            polynomial_degree=2
+        )
+
+        fuzzy_rdd, first_stage = estimate_rdd(
+            running=running,
+            add_controls=add_controls,
+            bandwidth=optimal_bandwidth,
+            polynomial_degree=2
+        )
+
+        save_results(
+            first_stage=first_stage,
+            fuzzy_rdd=fuzzy_rdd,
+            bandwidth=optimal_bandwidth,
+            filename=(
+                f"results2_{cutoff_name}_"
+                f"{specification}.txt"
+            )
+        )
+
+        if add_controls:
+            plot_bandwidth = optimal_bandwidth
+
+    # Delivery-time figure
+    rdd_plot(
+        running=running,
+        y=outcome,
+        bandwidth=plot_bandwidth,
+        polynomial_degree=2,
+        filename=f"outcome2_{cutoff_name}.png"
+    )
+
+    # First-stage figure
+    rdd_plot(
+        running=running,
+        y=treatment,
+        bandwidth=plot_bandwidth,
+        polynomial_degree=2,
+        filename=f"first_stage2_{cutoff_name}.png"
     )
