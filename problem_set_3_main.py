@@ -462,13 +462,26 @@ def save_results(
     bandwidth,
     filename
 ):
-    """Save first stage and fuzzy RDD in one file."""
+    """Save first stage, instrument relevance test, and fuzzy RDD."""
+
+    # Test assignment, conditional on time trends and controls.
+    instrument_test = first_stage.f_test(
+        "assigned_routeoptima = 0"
+    )
+
+    instrument_f = float(instrument_test.fvalue)
+    instrument_p = float(instrument_test.pvalue)
 
     text = (
         f"Optimal bandwidth: {bandwidth:.2f}\n\n"
         "FIRST STAGE\n"
         "===========\n"
         f"{first_stage.summary().as_text()}\n\n"
+        "EXCLUDED INSTRUMENT TEST (HC1 ROBUST)\n"
+        "====================================\n"
+        "H0: assigned_routeoptima coefficient = 0\n"
+        f"F-statistic: {instrument_f:.4f}\n"
+        f"p-value: {instrument_p:.6g}\n\n"
         "FUZZY RDD\n"
         "=========\n"
         f"{fuzzy_rdd}"
