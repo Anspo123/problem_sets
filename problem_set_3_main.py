@@ -681,3 +681,60 @@ for cutoff_name, running in cutoffs.items():
         polynomial_degree=2,
         filename=f"first_stage2_{cutoff_name}.png"
     )
+
+
+# ------------------
+# ITT / reduced-form RDD
+# ------------------
+
+# Select the same type of optimal bandwidth used for
+# the primary fuzzy RDD without controls
+itt_bandwidth_on = select_optimal_bandwidth(
+    running="minutes_from_switch_on",
+    add_controls=False,
+    polynomial_degree=1
+)
+
+itt_bandwidth_off = select_optimal_bandwidth(
+    running="minutes_from_switch_off",
+    add_controls=False,
+    polynomial_degree=1
+)
+
+
+# ITT at 11:30
+itt_on = rdrobust(
+    y=df["delivery_time_min"],
+    x=df["minutes_from_switch_on"],
+    c=0,
+    p=1,
+    h=itt_bandwidth_on,
+    kernel="tri"
+)
+
+
+# ITT at 14:30
+itt_off = rdrobust(
+    y=df["delivery_time_min"],
+    x=df["minutes_from_switch_off"],
+    c=0,
+    p=1,
+    h=itt_bandwidth_off,
+    kernel="tri"
+)
+
+# ------------------
+# Save ITT results
+# ------------------
+
+(output_path / "itt_switch_on.txt").write_text(
+    f"Selected bandwidth: {itt_bandwidth_on:.2f}\n\n"
+    f"{itt_on}",
+    encoding="utf-8"
+)
+
+(output_path / "itt_switch_off.txt").write_text(
+    f"Selected bandwidth: {itt_bandwidth_off:.2f}\n\n"
+    f"{itt_off}",
+    encoding="utf-8"
+)
