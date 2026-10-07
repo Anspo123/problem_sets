@@ -99,7 +99,7 @@ df = df.sort_values(
     ["municipality_id", "year"]
 ).reset_index(drop=True)
 
-# Treatment starts in 2015.
+# Post and pre-treatment:
 df["post"] = (df["year"] >= 2015).astype(int)
 df["did"] = df["reform_state"] * df["post"]
 
@@ -135,6 +135,32 @@ def descriptive_statistics(data, variables):
         tables.append(statistics)
 
     return pd.concat(tables, axis=1)
+
+
+# Pre-reform statistics: 2005–2014.
+pre_reform = df.loc[df["year"] < 2015].copy()
+
+descriptive_pre_table = descriptive_statistics(
+    pre_reform,
+    descriptive_vars,
+)
+
+descriptive_pre_table.round(3).to_csv(
+    output_path / "descriptive_pre_reform.csv"
+)
+
+
+# Post-reform statistics: 2015–2024.
+post_reform = df.loc[df["year"] >= 2015].copy()
+
+descriptive_post_table = descriptive_statistics(
+    post_reform,
+    descriptive_vars,
+)
+
+descriptive_post_table.round(3).to_csv(
+    output_path / "descriptive_post_reform.csv"
+)
 
 
 # Use pre-reform data to describe initial group differences.
@@ -336,50 +362,6 @@ pretrend_test = event_model.wald_test(
     encoding="utf-8",
 )
 
-
-# -----------------------
-# HETEROGENEITY: URBAN STATUS BEFORE REFORM
-# -----------------------
-
-# Fix urban status at 2014 to avoid using a classification
-# potentially affected by the reform.
-urban_baseline = (
-    df.loc[df["year"] == 2014]
-    .set_index("municipality_id")["urban"]
-)
-
-if not urban_baseline.isin([0, 1]).all():
-    raise ValueError("urban in 2014 must be observed and equal 0 or 1.")
-
-df["urban_pre"] = df["municipality_id"].map(urban_baseline)
-df["did_urban"] = df["did"] * df["urban_pre"]
-
-# Allow urban and non-urban municipalities to have
-# different common year effects.
-heterogeneity_model = fit_clustered(
-    f"{dependent_var} ~ did + did_urban"
-    f" + {fixed_effects} + C(year):urban_pre",
-    df,
-)
-
-heterogeneity_results = coefficient_table(
-    heterogeneity_model,
-    ["did", "did_urban"],
-)
-
-heterogeneity_results.to_csv(
-    output_path / "heterogeneity_results.csv"
-)
-
-# Urban effect = did + did_urban.
-urban_effect = heterogeneity_model.t_test("did + did_urban = 0")
-
-(output_path / "urban_total_effect.txt").write_text(
-    str(urban_effect),
-    encoding="utf-8",
-)
-
-
 # -----------------------
 # ROBUSTNESS CHECKS
 # -----------------------
@@ -415,4 +397,3 @@ coefficient_table(placebo_model, ["placebo_did"]).to_csv(
     output_path / "placebo_2010.csv"
 )
 
-print(f"\nResults saved to: {output_path.resolve()}")
