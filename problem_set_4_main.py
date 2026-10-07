@@ -363,6 +363,183 @@ pretrend_test = event_model.wald_test(
 )
 
 # -----------------------
+# HETEROGENEITY
+# -----------------------
+
+# Municipality characteristics measured before reform.
+baseline = (
+    df.loc[df["year"] == 2014]
+    .set_index("municipality_id")
+    .copy()
+)
+
+baseline_variables = ["urban", "gdp_per_capita", "population"]
+
+if not np.isfinite(
+    baseline[baseline_variables].to_numpy(dtype=float)
+).all():
+    raise ValueError(
+        "Baseline characteristics must be observed and finite."
+    )
+
+if not baseline["urban"].isin([0, 1]).all():
+    raise ValueError("urban in 2014 must equal 0 or 1.")
+
+# Medians across municipalities, including both treatment groups.
+gdp_median = baseline["gdp_per_capita"].median()
+population_median = baseline["population"].median()
+
+baseline["high_gdp"] = (
+    baseline["gdp_per_capita"] > gdp_median
+).astype(int)
+
+baseline["high_population"] = (
+    baseline["population"] > population_median
+).astype(int)
+
+# Map fixed baseline classifications to all municipality-years.
+df["urban_pre"] = df["municipality_id"].map(baseline["urban"])
+df["high_gdp_pre"] = df["municipality_id"].map(
+    baseline["high_gdp"]
+)
+df["high_population_pre"] = df["municipality_id"].map(
+    baseline["high_population"]
+)
+
+# Export thresholds for reporting.
+pd.DataFrame({
+    "variable": ["gdp_per_capita", "population"],
+    "baseline_year": [2014, 2014],
+    "median_cutoff": [gdp_median, population_median],
+    "dummy_definition": [
+        "1 if above median; 0 otherwise",
+        "1 if above median; 0 otherwise",
+    ],
+}).to_csv(
+    output_path / "heterogeneity_cutoffs.csv",
+    index=False,
+)
+
+baseline_groups = df.loc[df["year"] == 2014]
+
+specifications = [
+    ("urban", "urban_pre", "Rural", "Urban"),
+    (
+        "gdp", "high_gdp_pre",
+        "GDP per capita at/below median",
+        "GDP per capita above median",
+    ),
+    (
+        "population", "high_population_pre",
+        "Population at/below median",
+        "Population above median",
+    ),
+]
+
+heterogeneity_years = [
+    year for year in sorted(df["year"].unique())
+    if year != 2014
+]
+
+all_results = []
+
+for name, group_var, label_0, label_1 in specifications:
+    if not df[group_var].isin([0, 1]).all():
+        raise ValueError(
+            f"{group_var} must be observed and equal 0 or 1."
+        )
+
+    # Municipality counts by subgroup and reform status.
+    subgroup_counts = pd.crosstab(
+        baseline_groups[group_var],
+        baseline_groups["reform_state"],
+    ).reindex(index=[0, 1], columns=[0, 1], fill_value=0)
+
+    if (subgroup_counts == 0).any().any():
+        raise ValueError(
+            f"{name}: both subgroups need reform and "
+            "non-reform municipalities."
+        )
+
+    subgroup_counts.to_csv(
+        output_path / f"heterogeneity_{name}_counts.csv"
+    )
+
+    model_data = df.copy()
+
+    # Reform × Post × subgroup.
+    interaction_term = f"did_{name}"
+    model_data[interaction_term] = (
+        model_data["did"] * model_data[group_var]
+    )
+
+    # Allow subgroup-specific year effects.
+    year_terms = []
+
+    for year in heterogeneity_years:
+        term = f"{name}_year_{year}"
+        model_data[term] = (
+            model_data[group_var]
+            * (model_data["year"] == year).astype(int)
+        )
+        year_terms.append(term)
+
+    formula = (
+        f"{dependent_var} ~ did + {interaction_term}"
+        f" + {fixed_effects}"
+        + " + " + " + ".join(year_terms)
+    )
+
+    model = fit_clustered(formula, model_data)
+
+    # Both subgroup effects and a formal test of their difference.
+    contrasts = [
+        (f"Effect: {label_0}", "did = 0"),
+        (
+            f"Effect: {label_1}",
+            f"did + {interaction_term} = 0",
+        ),
+        (
+            f"Difference: {label_1} minus {label_0}",
+            f"{interaction_term} = 0",
+        ),
+    ]
+
+    rows = []
+
+    for interpretation, expression in contrasts:
+        test = model.t_test(expression)
+        ci = np.asarray(test.conf_int()).reshape(-1, 2)[0]
+
+        rows.append({
+            "dimension": name,
+            "interpretation": interpretation,
+            "estimate": float(np.asarray(test.effect).item()),
+            "std_error": float(np.asarray(test.sd).item()),
+            "p_value": float(np.asarray(test.pvalue).item()),
+            "ci_lower": float(ci[0]),
+            "ci_upper": float(ci[1]),
+        })
+
+    results = pd.DataFrame(rows)
+
+    results.to_csv(
+        output_path / f"heterogeneity_{name}_results.csv",
+        index=False,
+    )
+
+    all_results.append(results)
+
+    print(f"\n{name.upper()} HETEROGENEITY")
+    print(results.round(4).to_string(index=False))
+
+pd.concat(all_results, ignore_index=True).to_csv(
+    output_path / "heterogeneity_all_results.csv",
+    index=False,
+)
+
+
+# -----------------------
 # ROBUSTNESS CHECKS
 # -----------------------
 
